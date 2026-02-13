@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trading Performance Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         * {
@@ -42,7 +41,7 @@
             opacity: 0.9;
         }
 
-        .upload-section {
+        .loading {
             background: white;
             border-radius: 15px;
             padding: 40px;
@@ -51,51 +50,19 @@
             text-align: center;
         }
 
-        .upload-area {
-            border: 3px dashed #667eea;
-            border-radius: 10px;
-            padding: 40px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            background: #f8f9ff;
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
         }
 
-        .upload-area:hover {
-            border-color: #764ba2;
-            background: #f0f2ff;
-        }
-
-        .upload-area.dragover {
-            border-color: #764ba2;
-            background: #e8ebff;
-            transform: scale(1.02);
-        }
-
-        .upload-icon {
-            font-size: 3em;
-            margin-bottom: 15px;
-        }
-
-        input[type="file"] {
-            display: none;
-        }
-
-        .btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 12px 30px;
-            border-radius: 25px;
-            font-size: 1em;
-            cursor: pointer;
-            margin-top: 15px;
-            transition: transform 0.2s;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
-        }
-
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
 
         .dashboard {
@@ -225,6 +192,34 @@
             font-weight: bold;
         }
 
+        .error {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            text-align: center;
+        }
+
+        .refresh-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 1em;
+            cursor: pointer;
+            margin: 20px auto;
+            display: block;
+            transition: transform 0.2s;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .refresh-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
         @media (max-width: 768px) {
             .stats-grid {
                 grid-template-columns: 1fr;
@@ -238,41 +233,23 @@
                 font-size: 1.8em;
             }
         }
-
-        .loading {
-            text-align: center;
-            padding: 20px;
-            color: #667eea;
-            font-size: 1.2em;
-        }
-
-        .error {
-            background: #fee2e2;
-            color: #991b1b;
-            padding: 15px;
-            border-radius: 10px;
-            margin: 20px 0;
-        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>📊 Trading Performance Dashboard</h1>
-            <p>Professional Analytics & Insights</p>
+            <p>Live Data from Google Sheets</p>
         </div>
 
-        <div class="upload-section">
-            <div class="upload-area" id="uploadArea">
-                <div class="upload-icon">📁</div>
-                <h2>Upload Your Trading Journal</h2>
-                <p>Drag & drop your Excel file here or click to browse</p>
-                <input type="file" id="fileInput" accept=".xlsx,.xls">
-                <button class="btn" onclick="document.getElementById('fileInput').click()">Choose File</button>
-            </div>
+        <div class="loading" id="loading">
+            <div class="loading-spinner"></div>
+            <p>Loading your trading data...</p>
         </div>
 
         <div class="dashboard" id="dashboard">
+            <button class="refresh-btn" onclick="loadData()">🔄 Refresh Data</button>
+            
             <div class="stats-grid" id="statsGrid"></div>
             
             <div class="charts-grid">
@@ -306,9 +283,11 @@
                             <th>Asset</th>
                             <th>Entry</th>
                             <th>Exit</th>
+                            <th>Lot Size</th>
                             <th>P&L ($)</th>
                             <th>P&L (%)</th>
                             <th>Result</th>
+                            <th>Balance</th>
                         </tr>
                     </thead>
                     <tbody id="tableBody"></tbody>
@@ -319,122 +298,138 @@
 
     <script>
         let charts = {};
+        
+        // Your Google Sheets ID extracted from the URL
+        const SHEET_ID = '1DS0W-fdSX92Svqg7Eu-hwIuLrCTbH_TE';
+        
+        // Convert Google Sheets URL to CSV export URL
+        const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=0`;
 
-        // File upload handling
-        const uploadArea = document.getElementById('uploadArea');
-        const fileInput = document.getElementById('fileInput');
+        // Load data on page load
+        window.addEventListener('DOMContentLoaded', loadData);
 
-        uploadArea.addEventListener('click', () => fileInput.click());
+        async function loadData() {
+            try {
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('dashboard').classList.remove('active');
 
-        uploadArea.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            uploadArea.classList.add('dragover');
-        });
-
-        uploadArea.addEventListener('dragleave', () => {
-            uploadArea.classList.remove('dragover');
-        });
-
-        uploadArea.addEventListener('drop', (e) => {
-            e.preventDefault();
-            uploadArea.classList.remove('dragover');
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                handleFile(files[0]);
-            }
-        });
-
-        fileInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                handleFile(e.target.files[0]);
-            }
-        });
-
-        function handleFile(file) {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                try {
-                    const data = new Uint8Array(e.target.result);
-                    const workbook = XLSX.read(data, { type: 'array' });
-                    processWorkbook(workbook);
-                } catch (error) {
-                    alert('Error reading file. Please make sure it\'s a valid Excel file.');
-                    console.error(error);
+                const response = await fetch(CSV_URL);
+                const csvText = await response.text();
+                
+                const trades = parseCSV(csvText);
+                
+                if (trades.length === 0) {
+                    throw new Error('No trade data found in the spreadsheet');
                 }
-            };
-            reader.readAsArrayBuffer(file);
+
+                displayDashboard(trades);
+                
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('dashboard').classList.add('active');
+                
+            } catch (error) {
+                document.getElementById('loading').innerHTML = `
+                    <div class="error">
+                        <h3>❌ Error Loading Data</h3>
+                        <p>${error.message}</p>
+                        <p style="margin-top: 10px; font-size: 0.9em;">
+                            Make sure your Google Sheet is set to "Anyone with the link can view"
+                        </p>
+                        <button class="refresh-btn" onclick="loadData()">Try Again</button>
+                    </div>
+                `;
+            }
         }
 
-        function processWorkbook(workbook) {
-            const sheetName = workbook.SheetNames[0];
-            const worksheet = workbook.Sheets[sheetName];
-            const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
-            // Parse trades (skip header row and starting balance row)
+        function parseCSV(csv) {
+            const lines = csv.split('\n');
             const trades = [];
-            for (let i = 2; i < jsonData.length; i++) {
-                const row = jsonData[i];
-                if (row[1]) { // Has date
-                    trades.push({
-                        date: row[1],
-                        asset: row[2] || '',
-                        entry: parseFloat(row[3]) || 0,
-                        exit: parseFloat(row[4]) || 0,
-                        lotSize: parseFloat(row[5]) || 0,
-                        risk: parseFloat(row[6]) || 0,
-                        pl: parseFloat(row[7]) || 0,
-                        plPercent: parseFloat(row[8]) || 0,
-                        result: row[9] || '',
-                        balance: parseFloat(row[10]) || 0,
-                        dailyReturn: parseFloat(row[11]) || 0
-                    });
+            
+            // Skip first 2 rows (header and starting balance)
+            for (let i = 2; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+                
+                const values = parseCSVLine(line);
+                
+                // Check if row has date (column B, index 1)
+                if (values[1] && values[1].trim()) {
+                    const trade = {
+                        tradeNum: values[0] || i - 1,
+                        date: values[1] || '',
+                        asset: values[2] || '',
+                        entry: parseFloat(values[3]) || 0,
+                        exit: parseFloat(values[4]) || 0,
+                        lotSize: parseFloat(values[5]) || 0,
+                        risk: parseFloat(values[6]) || 0,
+                        pl: parseFloat(values[7]) || 0,
+                        plPercent: parseFloat(values[8]) || 0,
+                        result: values[9] || '',
+                        balance: parseFloat(values[10]) || 0,
+                        dailyReturn: parseFloat(values[11]) || 0,
+                        notes: values[12] || ''
+                    };
+                    
+                    // Only add if it has meaningful data
+                    if (trade.asset || trade.entry || trade.exit) {
+                        trades.push(trade);
+                    }
                 }
             }
+            
+            return trades;
+        }
 
-            if (trades.length === 0) {
-                alert('No trade data found. Please add trades to your spreadsheet.');
-                return;
+        function parseCSVLine(line) {
+            const values = [];
+            let current = '';
+            let inQuotes = false;
+            
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                
+                if (char === '"') {
+                    inQuotes = !inQuotes;
+                } else if (char === ',' && !inQuotes) {
+                    values.push(current);
+                    current = '';
+                } else {
+                    current += char;
+                }
             }
-
-            displayDashboard(trades);
+            values.push(current);
+            
+            return values.map(v => v.replace(/^"|"$/g, '').trim());
         }
 
         function displayDashboard(trades) {
-            document.getElementById('dashboard').classList.add('active');
-
-            // Calculate statistics
             const stats = calculateStats(trades);
-            
-            // Display stat cards
             displayStats(stats);
-            
-            // Create charts
             createCharts(trades, stats);
-            
-            // Display trade table
             displayTradeTable(trades);
         }
 
         function calculateStats(trades) {
-            const wins = trades.filter(t => t.result === 'WIN');
-            const losses = trades.filter(t => t.result === 'LOSS');
+            const validTrades = trades.filter(t => t.result && t.pl !== 0);
+            const wins = validTrades.filter(t => t.result === 'WIN');
+            const losses = validTrades.filter(t => t.result === 'LOSS');
             
-            const totalPL = trades.reduce((sum, t) => sum + t.pl, 0);
-            const startBalance = trades[0].balance - trades[0].pl;
-            const currentBalance = trades[trades.length - 1].balance;
-            const totalReturn = ((currentBalance - startBalance) / startBalance) * 100;
+            const totalPL = validTrades.reduce((sum, t) => sum + t.pl, 0);
+            const startBalance = validTrades.length > 0 ? validTrades[0].balance - validTrades[0].pl : 0;
+            const currentBalance = validTrades.length > 0 ? validTrades[validTrades.length - 1].balance : startBalance;
+            const totalReturn = startBalance !== 0 ? ((currentBalance - startBalance) / startBalance) * 100 : 0;
             
             const avgWin = wins.length > 0 ? wins.reduce((sum, t) => sum + t.pl, 0) / wins.length : 0;
             const avgLoss = losses.length > 0 ? losses.reduce((sum, t) => sum + t.pl, 0) / losses.length : 0;
             
-            const winRate = (wins.length / trades.length) * 100;
+            const winRate = validTrades.length > 0 ? (wins.length / validTrades.length) * 100 : 0;
             const profitFactor = avgLoss !== 0 ? Math.abs(avgWin / avgLoss) : 0;
             
-            const largestWin = Math.max(...trades.map(t => t.pl));
-            const largestLoss = Math.min(...trades.map(t => t.pl));
+            const largestWin = validTrades.length > 0 ? Math.max(...validTrades.map(t => t.pl)) : 0;
+            const largestLoss = validTrades.length > 0 ? Math.min(...validTrades.map(t => t.pl)) : 0;
 
             return {
-                totalTrades: trades.length,
+                totalTrades: validTrades.length,
                 wins: wins.length,
                 losses: losses.length,
                 winRate,
@@ -473,6 +468,8 @@
         }
 
         function createCharts(trades, stats) {
+            const validTrades = trades.filter(t => t.balance > 0);
+            
             // Destroy existing charts
             Object.values(charts).forEach(chart => chart.destroy());
             
@@ -481,10 +478,10 @@
             charts.balance = new Chart(balanceCtx, {
                 type: 'line',
                 data: {
-                    labels: trades.map(t => formatDate(t.date)),
+                    labels: validTrades.map((t, i) => `Trade ${i + 1}`),
                     datasets: [{
                         label: 'Account Balance',
-                        data: trades.map(t => t.balance),
+                        data: validTrades.map(t => t.balance),
                         borderColor: '#667eea',
                         backgroundColor: 'rgba(102, 126, 234, 0.1)',
                         tension: 0.4,
@@ -536,11 +533,11 @@
             charts.returns = new Chart(returnsCtx, {
                 type: 'bar',
                 data: {
-                    labels: trades.map(t => formatDate(t.date)),
+                    labels: validTrades.map((t, i) => `Trade ${i + 1}`),
                     datasets: [{
                         label: 'Daily Return %',
-                        data: trades.map(t => (t.dailyReturn * 100)),
-                        backgroundColor: trades.map(t => t.dailyReturn >= 0 ? '#10b981' : '#ef4444')
+                        data: validTrades.map(t => (t.dailyReturn * 100)),
+                        backgroundColor: validTrades.map(t => t.dailyReturn >= 0 ? '#10b981' : '#ef4444')
                     }]
                 },
                 options: {
@@ -561,7 +558,7 @@
 
             // Cumulative P&L Chart
             let cumulativePL = 0;
-            const cumulativeData = trades.map(t => {
+            const cumulativeData = validTrades.map(t => {
                 cumulativePL += t.pl;
                 return cumulativePL;
             });
@@ -570,7 +567,7 @@
             charts.pl = new Chart(plCtx, {
                 type: 'line',
                 data: {
-                    labels: trades.map(t => formatDate(t.date)),
+                    labels: validTrades.map((t, i) => `Trade ${i + 1}`),
                     datasets: [{
                         label: 'Cumulative P&L',
                         data: cumulativeData,
@@ -599,32 +596,27 @@
 
         function displayTradeTable(trades) {
             const tableBody = document.getElementById('tableBody');
-            const recentTrades = trades.slice(-20).reverse(); // Last 20 trades
+            const validTrades = trades.filter(t => t.asset || t.entry || t.exit);
+            const recentTrades = validTrades.slice(-20).reverse();
 
             tableBody.innerHTML = recentTrades.map(trade => `
                 <tr>
-                    <td>${formatDate(trade.date)}</td>
+                    <td>${trade.date}</td>
                     <td>${trade.asset}</td>
-                    <td>${trade.entry.toFixed(2)}</td>
-                    <td>${trade.exit.toFixed(2)}</td>
+                    <td>${trade.entry ? trade.entry.toFixed(2) : '-'}</td>
+                    <td>${trade.exit ? trade.exit.toFixed(2) : '-'}</td>
+                    <td>${trade.lotSize ? trade.lotSize.toFixed(2) : '-'}</td>
                     <td class="${trade.pl >= 0 ? 'positive' : 'negative'}">${formatCurrency(trade.pl)}</td>
                     <td class="${trade.plPercent >= 0 ? 'positive' : 'negative'}">${(trade.plPercent * 100).toFixed(2)}%</td>
-                    <td><span class="${trade.result === 'WIN' ? 'win-badge' : 'loss-badge'}">${trade.result}</span></td>
+                    <td>${trade.result ? `<span class="${trade.result === 'WIN' ? 'win-badge' : 'loss-badge'}">${trade.result}</span>` : '-'}</td>
+                    <td>${formatCurrency(trade.balance)}</td>
                 </tr>
             `).join('');
         }
 
         function formatCurrency(value) {
+            if (!value && value !== 0) return '-';
             return '$' + value.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-        }
-
-        function formatDate(date) {
-            if (typeof date === 'number') {
-                // Excel date number
-                const excelDate = new Date((date - 25569) * 86400 * 1000);
-                return excelDate.toLocaleDateString();
-            }
-            return new Date(date).toLocaleDateString();
         }
     </script>
 </body>
